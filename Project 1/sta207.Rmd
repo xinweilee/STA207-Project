@@ -1,0 +1,364 @@
+---
+title: "STA207 Group Project-STAR I"
+date: "1/17/2020"
+output: 
+  html_document:
+    df_print: paged
+    fig_caption: yes
+    number_sections: yes
+  pdf_documment: default
+bibliography: cit.bib
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 18px;
+  }
+
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,message = FALSE,warning = FALSE)
+```
+
+**Team ID: 1**
+
+**Name: Xinwei Li (Background and Data Exploration)**
+
+**Name: Minmeng Tang (Discussion)**
+
+**Name: Yifu Wu (Model Diagnostic)**
+
+**Name: Bingzheng Xu (Model Fit)**
+
+**Github repo (link): https://github.com/kingzcr/STA207-Project**
+
+# Introduction
+
+The influence of class type on student's score has become a hot topic nowadays. If there is a clear indication that a certain type of class could potentially increase the academic ability of students, it would be helpful in educating the young generations in the future. 
+
+## Background
+
+The Student/Teacher Achievement Ratio (STAR) was a class-size study dataset, which contains over 7,000 students in 79 schools. Each student was randomly assigned into one of three interventions: small class, regular class, and regular with-aid class. Teachers were also randomly assigned to the classes. The intervention were initiated as students entered school in kindergarten and continued until third grade [@DVN/SIWH9F_2008]. This dataset is availabe for download in Harvard Dataverse, which also provides detailed information about this dataset and the STAR project [@DVN/SIWH9F_2008].
+```{r install all required packages, include=FALSE}
+library(AER)
+library(dplyr)
+library(tidyr)
+library(qwraps2)
+library(knitr)
+library(ggpubr)
+library(gplots)
+library(boot)
+library(table1)
+library(asbio)
+library(nortest)
+library(car)
+options(digits = 3)
+```
+
+```{r install package and load dataset, echo=FALSE}
+data(STAR)
+name_list <- c('gender','ethnicity','star1','math1','degree1','ladder1','experience1','tethnicity1')
+grade1_data <- STAR[,name_list]
+```
+
+## Research interest
+
+Based on all 47 variables from `STAR` dataset, we exam all variables and only select variables that may have influence on 1st grade math score, which are gender, ethnicity, class type in 1st grade (star1), total math scaled score in 1st grade (math1), highest degree of 1st grade teacher (degree1), teacher's career ladder level in 1st grade (ladder1), years of teacher's total teaching experience in 1st grade (experience1), school type in 1st grade, and teacher's ethnicity in 1st grade (tethnicity1). Since students were assigned to each class type randomly, kindergarden background will not influence our evaluation on class type influencing math score. Therefore, we will only show the statistical summary for these `r length(name_list)` abovementioned variables in this paper.
+
+Based on the dataset, 1st grade have three class types, which are regular size, small size, and regular size with aide.
+
+# Statistical Analysis
+
+## Descriptive Analysis
+```{r,echo=FALSE}
+grade1_data2 <- grade1_data
+grade1_data2$ethnicity <- factor(grade1_data2$ethnicity,levels = levels(grade1_data2$ethnicity),
+                                 labels = c('Caucasian','African-American','Asian','Hispanic','American-Indian','other'))
+grade1_data2$tethnicity1 <- factor(grade1_data2$tethnicity1,levels = levels(grade1_data2$tethnicity1),
+                                  labels = c('Caucasian','African-American'))
+label(grade1_data2$star1) <- '1st grade class type'
+label(grade1_data2$math1) <- '1st grade math grade'
+label(grade1_data2$degree1) <- '1st grade teacher degree'
+label(grade1_data2$ladder1) <- '1st grade teacher career ladder'
+label(grade1_data2$experience1) <- '1st grade teacher experience in teaching (years)'
+label(grade1_data2$tethnicity1) <- '1st grade teacher ethnicity'
+```
+
+```{r, echo=FALSE}
+table1(~gender + ethnicity + math1 + degree1 + ladder1 + experience1 + tethnicity1 | star1,data=grade1_data2, topclass = 'Rtable1-zebra')
+```
+
+
+From the table above, we can see that the coposition of students' gender and ethnicity are relative stable across all three class types. The ratio between male and female is about 1, and Caucasian dominates, followed Aferican-American, which together account for more than 95% of total students in each class type. The proportion of missing values of 1st grade math score in each class type is between 3%-4%. 1st grade teachers' career ladder are slightly different across class types. For example, the ratios of level2 teachers are less than 1% for regular and small class types, however, 4.3% for regular + aide class type. The ratios of level3 teachers are around 3.3% for regular and regular + aide class types, but 6.5% in small class type.
+
+```{r,echo=FALSE}
+# Box Plot math score by group and color by group
+boxplot(math1 ~ star1, data = grade1_data,
+        color = c("#00AFBB", "#E7B800", "#FC4E07"),
+        ylab = "Math Score", xlab = "Treatment",
+        main = "Figure 1. Math score distributions for different class types")
+```
+
+```{r,echo=FALSE}
+# Plot math score means by group with 95% CI
+plotmeans(math1~ star1, data = grade1_data, p=0.95,
+          ylab = "Math Score", xlab = "Treatment",
+          main = "Figure 2. Math score means for different class types with 95% CI")
+```
+
+
+Both of the figures above show 1st math score mean for different class types: the mean 1st grade math score of regular, small, regular + aide class types are 525, 539, 530, respectively.
+
+## Main Analysis
+```{r, echo=F}
+my_data <- STAR[, c("star1", "math1")]
+my_data$group <- as.numeric(my_data$star1)
+my_data <- na.omit(my_data)
+my_data$group <- as.factor(my_data$group)
+```
+
+In this case, we choose to use cell mean model, which is $Y_{i,j} = \mu_i + \epsilon_{i,j}$ $i = 1,2,3$ $j=1,2,...,6600$, where the dependent variables $Y_{i,j}$ represent the $j^{th}$ observation on the $i^{th}$ treatment. For example, $Y_{1,2}$ would represent the second observation in class type 1. $μ_i$ is the common effect (average mean) for each treatments, and $\epsilon_{i,j}$ represents the random error in the $j^{th}$ observation on the $i^{th}$ treatment.
+
+Our model also has several assumptions:
+
+*1. $Y_{i,j}s$'s are randomly sampled, which means all math scores in the case are all independent.*
+
+*2. The $i$ groups are independent, which means that all three group types are independent in terms of the case.*
+
+*3. The errors $\epsilon_{i,j}$s are normally and independently distributed with mean $zero$ and variance $\sigma^2$.*
+
+In terms of our problem, $i$ is the class type. $Y_{i,j}s$ is the math score of $1^{st}$ grade, $\mu_i$ is the common effect (average mean) for each class type ($i = 1,2,3$ represent regular, small and regular-with-aide class type respectively), and $\epsilon_{i,j}$ is the random error in this experiment.
+
+In our ANOVA model, we regard class type as dummy variable. Since it contains three different types, we only need to create two dummy variables (indicator variable), each taking value on $0$ or $1$. The dummy variable $X_i$ $i=1,2$, which represents regular class and small class.
+
+We have $X_1=\left\{\begin{array}{rcl}1&&{if\;\;regular}\\0&&otherwise\end{array} \right.$, $X_2=\left\{\begin{array}{rcl}1&&{if\;\;small}\\0&&otherwise\end{array} \right.$
+
+To check whether our data would violate the assumption of one-way ANOVA mentioned above, we have drawn a histogram for the $1^{st}$ grade math score as well as three box plots of the math score for each class type.
+
+```{r, echo=F}
+hist(my_data$math1, main = "Figure 3. Histogram for math score")
+```
+
+As the histogram shown above, the bell-shaped distribution of math score can be observed.
+
+Also the boxplots in Figure 1 show that the distribution of math scores for each type of class is quite similar with mean values around 520. In summary, we do not observe any violations of the one-way ANOVA assumptions, therefore we believe that our choice of model is appropriate.
+
+### Fit one-way ANOVA model
+
+In this case, we fit our one-way ANOVA model with math scores in $1^{st}$ grade and class type.
+
+```{r, echo=F}
+model1 <- lm(math1 ~ group, data = my_data)
+# Compute the analysis of variance
+math.aov <- aov(model1)
+# Summary of the ANOVA
+summary(math.aov)
+```
+
+We can obtain the following statistics from the ANOVA results:
+
+The group size for each type is that $n_1=$ `r sum(my_data$group==1)`, $n_2=$ `r sum(my_data$group==2)`, $n_3=$ `r sum(my_data$group==3)`, $n_t=n_1+n_2+n_3+n_4=$ `r dim(my_data)[1]`
+
+The estimeated value of $\mu_i$s are the group means, so the estimated value for $\mu_1=\bar{Y}_{1\cdot}=$ `r mean(my_data$math1[my_data$group==1])`, $\mu_2=\bar{Y}_{2\cdot}=$ `r mean(my_data$math1[my_data$group==2])`, $\mu_3=\bar{Y}_{3\cdot}=$ `r mean(my_data$math1[my_data$group==3])`. Since $E(Y_{i,j})=\mu_i$ for all $i,j$, so that the estimated expected values are the group means.
+
+We can also get sum of squared values together with degrees of freedom:
+
+$SSE=$ `r (sse=sum(math.aov$residuals^2))`, $df=$ `r math.aov$df.residual`, $MSE=\frac{SSE}{df(SSE)}=$ `r (mse=sum(math.aov$residuals^2)/math.aov$df.residual)`
+
+$SSTO=$ `r (ssto=sum((my_data$math1-mean(my_data$math1))^2))`, $df=$ `r dim(my_data)[1]-1`, $MSTO=\frac{SSTO}{df(SSTO)}=$ `r (msto=sum((my_data$math1-mean(my_data$math1))^2))/dim(my_data)[1]-1`
+
+$SSTR=$ `r (sstr=ssto-sse)`, $df=$ `r dim(my_data)[1]-1-math.aov$df.residual`, $MSTR=\frac{SSTR}{df(SSTR)}=$ `r (mstr=sstr/(dim(my_data)[1]-1-math.aov$df.residual))`
+
+### Test-statistics
+
+To do a test-statistics for the dataset, we have to make a hypothesis as shown below:
+
+$H_0:\mu_1=\mu_2=\mu_3$ (In this case, the average math score for each class type are equal) against the alternative $H_a:not\;all\;\mu_i's\;are\;equal$ (In this case, at least one class type's math score is different to the others).
+
+We can calculate the F-statistics $F^*=\frac{MSTR}{MSE}=$ $`r (F.stat=(mstr/mse))`$, when $F(0.95;2,6597)=$ `r qf(0.95,dim(my_data)[1]-1-math.aov$df.residual,math.aov$df.residual)`. Since $F^*>F(0.95;2,6597)$, with the corresponding $p-value<2e^{-16}$, we can thus reject the null hypothesis at chosen significance lever $0.05$ and conclude that there are significant difference between class type.
+
+### Power Calculation
+
+A power calculation needs to be done because we want to know the probability that there is a significant difference in the average math score for at least one of the class type, when it is true in reality.
+
+We know $\alpha$ value represents the probability of $Type\;I\;error$, while the $\beta$ value represents the $Type\;II\;error$. As the $\alpha$ value increases, the $\beta$ value would decrease. Since power equals to $1-\beta$, the power value would increase as the $\alpha$ value increases.
+
+```{r echo=F}
+give.me.power <- function(ybar, ni, MSE, alpha) {
+  a <- length(ybar)
+  nt <- sum(ni)
+  overall.mean <- sum(ni*ybar)/nt
+  phi <- (1/sqrt(MSE))*sqrt(sum(ni*(ybar-overall.mean)^2)/a)
+  phi.star <- a*phi^2
+  Fc <- qf(1-0.05,a-1,nt-a)
+  power <- 1-pf(Fc,a-1,nt-a,phi.star)
+  return(power)
+}
+```
+
+```{r, echo=F}
+group.mean <- by(my_data$math1,my_data$group,mean)
+group.size <- by(my_data$math1,my_data$group,length)
+MSE <- sum(math.aov$residuals^2)/math.aov$df.residual
+power <- give.me.power(group.mean,group.size,MSE,0.05)
+```
+
+In this case, we have set the $\alpha$ value to be $0.05$, and we get $power=$ `r power`, which means that the probability of $Type\;II\;error$ happens is $0$ in this case.
+
+### Confidence interval
+
+In the one-way ANOVA test, we not only want to know the difference between class type means, but also want to explore which pairs of class types are different. Thus we perform a multiple pairwise-comparison to determine if the mean difference between specific pairs of class type are statistically significant. The value of three multipliers are shown below:
+
+```{r, echo=F}
+alpha <- 0.05
+# Bonferroni correction:
+m <- 6
+B.stat <- qt(1-alpha/(2*m),math.aov$df.residual)
+# Tukey-Kramer 
+T.stat <- qtukey(1-alpha, nmeans=length(math.aov$coefficients), df=math.aov$df.residual)/sqrt(2)
+# Scheffe 
+S.stat <- sqrt((length(math.aov$coefficients)-1)*qf(1-alpha,length(math.aov$coefficients)-1,math.aov$df.residual))
+table.stats=matrix(0,1,3);
+table.stats[1,]=c(B.stat,T.stat,S.stat);
+colnames(table.stats)=c('Bonferroni', 'Tukey', 'Scheffe')
+table.stats
+```
+
+From the output above we know that the multiplier of Tukey is the smallest among three, which means we would choose Tukey method in this case.
+
+```{r, echo=F}
+tukeyCI(my_data$math1, my_data$group, conf.level = 1-alpha)
+```
+
+According to the results above, with $\alpha=0.05$:
+
+The confidence interval for $\mu_1-\mu_2$ lies in $(-16.46754,-10.33905)$, which means that the average math score for regular class type is lower than the that for small class type by between 10.33905 and 16.46754.
+
+The confidence interval for $\mu_1-\mu_3$ lies in $(-7.27072,-1.43075)$, which means that the average math score for regular class type is lower than the that for regular-with-aide class type by between 1.43075 and 7.27072.
+
+The confidence interval for $\mu_2-\mu_3$ lies in $(5.9065,12.19863)$, which means that the average math score for small class type is higher than the that for regular-with-aide class type by between 5.9065 and 12.19863.
+
+All the CIs do not contain $0$, which means that the average math score for all three class type are significant difference between each other.
+
+## Model diagnostics and Sensitivity analysis
+
+### Checking outliers
+
+```{r, echo=F, eval=F}
+math.model <- lm(math1~group,data = my_data)
+my_data$ei <- math.model$residuals
+ss <- nrow(my_data)
+aa <- length(unique(my_data$group))
+eij.star <- math.model$residuals/sqrt(MSE)
+t.cutoff <- qt(1-0.05/(2*ss), ss-aa)
+CO.eij <- which(abs(eij.star)>t.cutoff)
+CO.eij
+```
+
+```{r, echo=F, eval=F}
+rij <- rstandard(math.model)
+CO.rij <- which(abs(rij)>t.cutoff)
+CO.rij
+```
+
+The first thing to focus on is checking these assumptions. Outliers cause non-normality or non-constant variance, and typically removed, therefore, we look for outliers in our raw dataset based on two methods, which are “Semi-Studentized Residuals” and “Studentized Residuals”. After calculating in R using two approaches, we find that there are no outliers in the raw data. So, we may not remove any sample from our raw dataset.
+
+### Assessing Normality
+
+In order to check if the residuals are normally distributed, we can use two main ways to assess the normality. the first one is the QQ-plot and the second one is the histogram of residuals.
+
+*1. QQ-plot*
+
+A QQ-plot can calculate the actual centered percentiles of the data and compares them to the normal distribution.
+
+```{r, echo=F}
+plot(math.aov, which = 2)
+```
+
+The QQ-plot above shows that all the points fall approximately along this reference line, we can assume the data is approximately normal.
+
+*2. Histogram of residuals*
+
+```{r echo=F}
+hist(model1$residuals, main = "Figure 4. Histogram of residuals")
+```
+
+The histogram above has demonstrated a bell-shaped distribution of residuals, which suggests that the residuals are normally distributed.
+
+### Assessing Constant Variance (Homoscedasticity)
+
+Same as assessing normality, we have two main ways to assess the homoscedasticity, the first one is plot and the second one is Brown-Forsythe test.
+
+*1. Plot $e_{ij}$ vs the "Fitted value"*
+
+```{r, echo=F}
+plot(math.aov, which = 1)
+```
+
+After plotting the errors by different class type, we can know that the plot suggests roughly equal vertical spread (or variance). Also the plotting method is subjective, so we choose BF test to check if the variance is constant. 
+
+*2.	Brown-Forsythe test*
+
+To ensure the variance is constant, we also do a hypothesis test, which is shown below:
+
+$H_0:All\;the\;group\;variances\;are\;equal$ against the alternative $H_a:At\;least\;one\;of\;the\;group\;variance\;is\;not\;equal$.
+
+```{r, echo=F}
+the.BFtest <- leveneTest(model1$residuals ~ group, data=my_data, center=median)
+the.BFtest
+```
+
+The result shows that the $p-value$ of the BF test is $0.055$, which is bigger than the $\alpha$ value $0.05$, so we can conclude that for different class type, variances are equal.
+
+```{r, echo=F}
+kruskal.test(math1 ~ group, data = my_data)
+```
+
+After assessing the normality and constant variance, we can conclude that the assumptions of the Single Factor ANOVA model fit the model with raw data without violation.
+
+# Discussion
+
+## Pairwise Comparison
+
+In one-way ANOVA test, a significant $p-value$ indicates that some of the group means are different, but we don’t know which pairs of groups are different. Therefore, we could conduct pairwise-comparison to find out which group means are significantly different. In this section, we consider Tukey's procedure, Bonferroni's procedure, and Scheffe's procedure. Since we care about all pair-wise comparisons, Tukey's procedure is the best among all three procedures. And here we show the Tukey's procedure pair-wise comparison results.
+
+For all three pair-wise comparisons, we have three sets of hypothesis and tests:
+small-regular:        $H_0$: the math score mean between small and regular classes are equal;
+                      $H_a$: the math score mean of small and regular classes are not equal.
+regular+aide-regular: $H_0$: the math score mean between regular with aide and regular classes are equal;
+                      $H_a$: the math score mean of regular with aide and regular classes are not equal.
+regular+aide-small:   $H_0$: the math score mean between regular with aide and small classes are equal;
+                      $H_a$: the math score mean of regular with aide and small classes are not equal.
+Decision rule: reject $H_0$ at significant level `alpha` if the $p-value$ of the test < `alpha`.
+
+```{r,echo=FALSE,results='asis'}
+res.aov <- aov(math1~star1, data = grade1_data)
+t_test = TukeyHSD(res.aov)
+kable(t_test$star1,digits = 30)
+options(scipen=-30)
+```
+
+
+Since $p-value$ of the three of the tests are much smaller than $0.005$, we reject all three null hypotheses and conclude that the mean math score among all three class types are different from the others with at least significant level $99.5%$.
+
+## Causal inference
+
+We cannot conclude that there are causal relations between class types and mean math score. To be able to make any causal statements, we need make sure all assumptions are valid:
+
+*Assumption 1: Stable Unit Treatment Value Assumption (SUTVA), which means the assignment of treatment to one person does not affect the potential outcomes of others. In our case, we cannot make sure that the class type assigned to one student will not influence the potential math score of other students. For example, if students from dfferent class types may disscuss on math homework together or review class materials together after class, the performance of their math tests will be influenced by these study groups. Even we can make sure that students received the same version of treatment (treatment are stable). For example, class types are defined under the same criteria across all schools. The SUTVA assumption still does not hold in this case.*
+
+*Assumption 2: Ignorability, which means the assignment of treatment is independent of the potential outcome. In our case, the 1st grade class type assignment is random and is independent of the potential 1st grade math score.*
+
+Since not both these two assumptions are valid and held in our $1^{st}$ grade math score and class type study, we can not conclude that there are causal relations between class type and mean math score, which means we can not confidently say different class type can influence mean math score.
+
+# Session Information
+```{r, echo=FALSE}
+print(sessionInfo(), local = F)
+```
+
+# Reference
+
+
+
