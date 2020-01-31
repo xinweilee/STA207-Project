@@ -1,0 +1,284 @@
+---
+title: "The effects of class types on the 1st grade math score of teacher"
+output:
+  pdf_document: default
+  word_document: default
+  pdf_documment: default
+  html_document:
+    df_print: paged
+    fig_caption: yes
+    number_sections: yes
+bibliography: cit.bib
+date: "1/30/2020"
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 18px;
+  }
+
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message = FALSE,warning = FALSE)
+options(digits = 3)
+```
+
+**Team ID: 1**
+
+**Name: Xinwei Li (Introduction)**
+
+**Name: Minmeng Tang (Discussion)**
+
+**Name: Yifu Wu (Model Diagnostic)**
+
+**Name: Bingzheng Xu (Model Fit)**
+
+**Github repo (link): https://github.com/kingzcr/STA207-Project**
+
+```{r,include=FALSE}
+library(AER)
+library(dplyr)
+library(tidyr)
+library(qwraps2)
+library(gplots)
+library(foreign)
+library(reshape2)
+library(dplyr)
+library(ggpubr)
+library(car)
+library(SuppDists)
+library(knitr)
+library(table1)
+```
+
+```{r,include=FALSE}
+star <- read.spss("STAR_Students.sav",to.data.frame = TRUE)
+data <- star[,c("g1classtype", "g1tmathss",'g1tchid', 'g1schid')]
+data_tr <- aggregate(g1tmathss~g1tchid+g1classtype+g1schid, data, median)
+names(data_tr)[names(data_tr) %in% c("V1")] <- "g1tmathss"
+school <- aggregate(g1tmathss~g1classtype+g1schid, data_tr, length)
+school <- dcast(school, g1schid~g1classtype)
+school_na <- na.omit(school)
+school_id <- school$g1schid[is.na(school$`REGULAR + AIDE CLASS`)]
+data_stand <- data_tr[!(data_tr$g1schid %in% school_id),]
+data_stand <- data_stand[,c("g1tmathss","g1classtype","g1schid")]
+```
+
+## 1 Introduction
+Large literature on the effect of school resources on student achievement are generally ambiguous and conflicting; even quantitative summaries cannot reach consistent conclusion [@krueger1999experimental]. In this project, we focus on evaluating the effects of class type and school on test scores based on the Tennessee Student/Teacher Achievement Ratio (STAR) project, which is a four-year longitudinal class-size study including more than 7,000 students in 79 schools. The STAR project data is available from Harvard Dataverse online library. [@DVN/SIWH9F_2008]. In the experiment, within each school, a completely randomized experiment is conducted: students and teachers were randomly assigned into one of three class types: small class (13-17 students per teacher), regular class (22-25 students per teacher), and regular classes with a teacher’s aide. To be eligible for this experiment, a school had to have sufficient number of students to form at least one class of each of the three types [@imbens2015causal]. 
+
+The purpose of this analysis is to explore simultaneously the effects of class type and school based on the first-grade math scores from STAR data with teacher as the unit through a two-way analysis of variance (ANOVA) model. Among all variables 379 variables from the full `STAR` dataset, we only explore variables that may have influence on 1st grade math score of teachers, which are teachers’ gender, ethnicity, class type in 1st grade (g1classtype), highest degree of 1st grade teacher (g1thighdegree), teacher’s career ladder level in 1st grade (g1tcareer), and years of teacher’s total teaching experience in 1st grade (g1tyears). As shown in Table 4 in the appendix, the composition of teachers’ gender and ethnicity are relative stable across all three class types. Nearly all teachers are female with only 1.5% male in the small class, and White dominates, followed by Black, together accounting for all teachers in each class type. The proportion of missing values of 1st grade math score in each class type is around 3%-4%. 1st grade teachers’ career ladder and years of teaching experience are slightly different across class types. For examples, the ratios of probation teachers are around 6.6% for regular + aide class and small class types, however, 14.8% for regular class type. The average teaching experience of teachers are around 12 years for small and regular + aide class types, but 10 years in small class type. Generally, we could see that the random assignment of teachers to classes of different types is valid, and the resulting inferences are valid for the effect on the teachers of being assigned to a particular type of class. 
+
+To better indicate the general performance of each teacher, we focus on the median scores on a mathematics test over all students for their teacher. We choose median instead of mean value to avoid the effects from outliers. In total, there are `r nrow(unique(data_tr['g1schid']))` schools and `r nrow(data_tr)` teachers. All schools have small and regular class types, but `r nrow(school)-nrow(school_na)` schools do not have regular-with-aide class type. We discard schools that do not have at least one class of each of the three types, leaving us with `r nrow(school_na)` schools, which creates `r nrow(school_na)` strata. The total number of teachers in this reduced data set is N = 325. Out of these 325 teachers, N1 = 118 are assigned to small classes, N2 = 107 and N3 = 100 are assigned to regular classes and regular-with-aide classes respectively. Figure 3 in the appendix shows the distribution of teachers’ performance, which is the median math scores of their 1st grade students, in different class types.
+
+The results indicate that both class size and school does have a statistically significant effect on teachers’ performance in terms of median of test scores over all his/her students. More precisely, teachers who were assigned to small classes have statistically significant higher score than those who were assigned to regular or regular-with-aide classes, while we do not find significant difference between the math scores of teachers from regular and regular-with-aide classes.
+
+
+## 2. Analysis
+### 2.1 Two-way ANOVA Model
+```{r, echo=F}
+my_data_tr <- data_stand
+my_data_tr$class <- as.numeric(my_data_tr$g1classtype)
+my_data_tr$school <- as.numeric(my_data_tr$g1schid)
+my_data_tr <- na.omit(my_data_tr)
+my_data_tr$class <- as.factor(my_data_tr$class)
+my_data_tr$school <- as.factor(my_data_tr$school)
+
+```
+To study the effects of class types on math scaled scores in 1st grade with the school indicator as the other factor, we will use a two-way ANOVA model. Our general model equation is shown as following:
+
+$Y_{i,j,k} = \mu_{i,j} + \alpha_{i} + \beta_{j} + \epsilon_{i,j,k}$ where $i = 1,...,l$; $j=1,...,m$; $k=1,...,n_{i}$.
+
+**The assumptions of our model:**
+
+  * All the subjects ($Y_{i,j,k}$) are randomly sampled (independent).
+  
+  * All levels of factor $i$ are independent
+  
+  * All levels of factor $j$ are independent
+  
+  * The errors $\epsilon_{i,j,k}$s are normally and independently distributed with mean 0 and variance $\sigma^2$.
+  
+**Explanation of the natations:**
+
+  * The dependent variable $Y_{i,j,k}$ represents the $k^{th}$ observation with treatment $i$ and $j$. In terms of our problem, factor $i$ represents different class types, and factor $j$ represents different schools. As an illustration, $Y_{1,2,3}$ would represent the 3rd observation in class type 1 of the 2nd school. 
+
+  * $\mu_{i,j}$ is the common effect (overall mean) for each class type of each school (as $i = 1,2,3$ represent small, regular and regular-with-aide class type respectively, and $j = 1,2,...,64$ represents 64 different schools in the STAR dataset). 
+
+  * $\epsilon_{i,j,k}$ represents the random indiviual error in the $k^{th}$ observation on the treatment $i$ and $j$., which are the unobserved random variables in this experiment.
+
+We do not include the interaction term in our two-way ANOVA model since the interaction term reflects the class type influences within a single school, which is not the interest of this analysis. But rather, we care about hypotheses and treatment effects across all schools. Moreover, the sample sizes are not big enough so that we cannot obtain precise estimates of the class type effects within any one school. 
+
+### 2.2 Model Diagnostic
+After fitting our model, it is necessary to use some diagnostic plots and tests to check whether data has violated the model assumptions of ANOVA mentioned above. We start with looking for outliers in our raw dataset based on the "Semi-Studentized Residuals Method" and "Studentized Residuals Method" since outliers, We test the independence of subjects and factors. Then, we use the "Residuals vs Fitted plot" with the "Levene Test" to check the homogeneity of variance. Lastly, the histgram of residuals and QQ-plot are used to test the normality of residuals.
+
+### 2.3 Pairwise Comparison
+In two-way ANOVA test, a significant p-value indicates that some of the group means are different, but we don’t know which pairs of groups are different. Therefore, we could conduct pairwise-comparison to find out which group means are significantly different. In this section, we consider Tukey's procedure, Bonferroni's procedure, and Scheffe's procedure. Since we care about all pair-wise comparisons, Tukey's procedure is the best among all three procedures. And here we show the Tukey's procedure pair-wise comparison results.
+
+Since we define teachers' performance as the median math score of the students, for all three pair-wise comparisons, we have three sets of hypothesis and tests:
+
+**small-regular:**
+
+H0: the teachers' performance mean between small and regular classes are equal;
+
+H1: the teachers' performance mean of small and regular classes are not equal.
+                      
+**regular+aide-regular:**
+
+H0: the teachers' performance mean between regular with aide and regular classes are equal;
+
+H1: the teachers' performance mean of regular with aide and regular classes are not equal.
+                      
+**regular+aide-small:**
+
+H0: the teachers' performance mean between regular with aide and small classes are equal;
+
+H1: the teachers' performance mean of regular with aide and small classes are not equal.
+                      
+**Decision rule:** reject H0 at significant level $\alpha$ if the p-value of the test < $\alpha$.
+
+## 3. Results
+### 3.1 Fit two-way ANOVA model
+
+The result of the Two-Way ANOVA is illustrated following:
+
+**Model: 1st grade math score ~ class type + school **
+```{r, echo=F,message=F,results='asis'}
+model1 <- lm(g1tmathss ~ class + school, data = my_data_tr)
+# Compute the analysis of variance
+math.aov <- aov(model1)
+math.aov.table <- anova(model1)
+# Summary of the ANOVA
+kable(math.aov.table,caption = "Summary of the Two-Way ANOVA Model.")
+
+```
+
+From Table 1, we can observe that both p-value of class type and school are lower than 0.05, so we can conclude that both class type and school are statistically significant. School is the most significant factor variable. These results would lead is to believe that changing class type or school, will impact significantly the mean math score of 1st grade.
+
+Also we can get sum of squared values together with degrees of freedom:
+
+$SSE=$ `r (sse=sum(math.aov$residuals^2))`, $df=$ `r math.aov$df.residual`, $MSE=\frac{SSE}{df(SSE)}=$ `r (mse=sum(math.aov$residuals^2)/math.aov$df.residual)`
+
+$SSTO=$ `r (ssto=sum((my_data_tr$g1tmathss-mean(my_data_tr$g1tmathss))^2))`, $df=$ `r dim(my_data_tr)[1]-1`, $MSTO=\frac{SSTO}{df(SSTO)}=$ `r (msto=sum((my_data_tr$g1tmathss-mean(my_data_tr$g1tmathss))^2))/dim(my_data_tr)[1]-1`
+
+$SSTR=$ `r (sstr=ssto-sse)`, $df=$ `r dim(my_data_tr)[1]-1-math.aov$df.residual`, $MSTR=\frac{SSTR}{df(SSTR)}=$ `r (mstr=sstr/(dim(my_data_tr)[1]-1-math.aov$df.residual))`
+
+### 3.2 Model diagnostics and Sensitivity analysis
+
+#### 3.2.1 Checking outliers
+
+```{r, echo=F, eval=F}
+math.model <- lm(g1tmathss ~ class + school, data = my_data_tr)
+my_data_tr$ei <- math.model$residuals
+ss <- nrow(my_data_tr)
+aa <- length(unique(my_data_tr$class))
+bb <- length(unique(my_data_tr$school))
+SSE = sum(math.model$residuals^2)
+MSE <- SSE/(ss-aa-bb+1)
+eij.star <- math.model$residuals/sqrt(MSE)
+t.cutoff <- qt(1-0.05/(2*ss), ss-aa-bb+1)
+CO.eij <- which(abs(eij.star)>t.cutoff)
+CO.eij
+```
+
+```{r, echo=F, eval=F}
+rij <- rstandard(math.model)
+CO.rij <- which(abs(rij)>t.cutoff)
+CO.rij
+```
+After calculating in R using both “Semi-Studentized Residuals” and “Studentized Residuals” approaches,  we find that there are no outliers in the raw data. So, we may not remove any sample from our raw dataset.
+
+#### 3.2.2 Checking independence
+
+In this experiment, the study randomly assigned student to different class type and school, also teachers are also randomly assigned to the class. There is also no evidence indicating the association of math score between different students. Thus, we can conclude that all factors and subjects are independent in the dataset.
+
+#### 3.2.3 Checkinig homogenerity of variance
+
+According to the Residuals vs Fitted values plot in Figure 1 in the appendix, there is no evidence showing that the variance across groups are statistically significantly different. 
+
+We try to confirm this finding by using a Levene Test. And the results are shown in Table 2.
+```{r, echo=F, include=F, message=F}
+library(car)
+leveneTest(g1tmathss ~ class*school, data = my_data_tr)
+```
+
+$\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;\;$Table 2 Summary of the Levene's Test for the Two-Way ANOVA Model.
+
+| Source of variation   | Drgrees of freedom | F value | Pr(>F) |
+|:-:|:-:|:-:|:-:|
+| group  | 215 | 1.88 | 0.00015 | 
+|  | 109 |  |  | 
+
+From the result of Levene's test above, it gives a P-value of 7.1e-06 which is much lower than the siginificant level of 0.05.This indicates an issue of unequal variance, which conflicts to our findings in the Residuals and fitted plot.We believe the major reason why this test has not passed is the small sample size in our dataset. Since we only have 325 observations but 216 cells, the number of observations in each cell is very limited, which makes the test hard to pass.
+
+#### 3.2.4 Checking Normality
+
+According to the histogram of math score in Figure 1 in the appendix, the bell-shaped distribution of math score can be observed.
+From the QQ-plot in Figure 1 in the appendix, we can assume normality of the data as most of the points falls approximately along the reference line.
+
+### 3.3 Pair-wise comparison
+The Tukey's procedure calculated class type pair-wise comparison results are shown in the Table 3 below. The confidence intervals for class type pair-wise comparison are shown in Figure 2 in the appendix.
+```{r ci_table, echo=FALSE,results='asis'}
+model <- aov(g1tmathss~g1classtype+as.factor(g1schid),data = data_stand)
+T.ci <- TukeyHSD(model, which = "g1classtype")
+table_tk <- TukeyHSD(model,which = "g1classtype")$g1classtype
+kable(table_tk,caption = "Class type pair-wise comparison confidence interval")
+```
+
+Since p-value of the pair-wise comparison between regular-small and regular+aide-small are much smaller than 0.005, we reject the null hypotheses of regular-small and regular+aide-small and conclude that the mean teachers' performance for regular-small and regular+aide-small are different from the others with at least significant level 99.5%. For regular+aide-regular comparison, p-value is greater than 0.5, therefore, we fail to reject the null hypothesis and conclude that we are not able to find the teachers' performance difference between regular+aide class and regular class.
+
+## 4.0 Discussion
+Using a two-way ANOVA model, we find that both class size and school have effect on teachers’ performance. Among all 1st grade teachers, those randomly assigned to the small class size outperform those teachers in both the regular and regular + aide groups in terms of the median math scores of the students. Teachers in small classes show 13 points increase on average in their median math scaled scores compared with teachers in regular classes, and an average 12 points higher than those in regular-with-aide classes. We find no evidence that aide could help improve teachers’ outcomes in regular classes (no significant difference between regular and regular-with-aide classes). 
+
+We can safely make a causal statement between class types and teacher’s performance (median math score of each teacher) since all the following assumptions are valid:
+
+  * **Assumption 1: Stable Unit Treatment Value Assumption (SUTVA)**, which means 1) the assignment of treatment to one person does not affect the potential outcomes of others, and 2) treatments are stable. In our case, one teacher’s potential performance does not depend on the class type assigned to other teachers, and teachers’ potential performance will not be affected by whether teachers from different class types share or discuss teaching materials (no interference). Moreover, given the structure of the experiment, we can make sure that class types are defined under the same criteria across all schools (treatment are stable). Therefore, the SUTVA assumption holds in this case.
+
+  * **Assumption 2: Ignorability**, which means the assignment of treatment is independent of the potential outcome. STAR experiment is a stratified randomized experiment, where teachers and students are grouped together into schools in advance naturally. Within each school, a completely randomized experiment is conducted, making sure that other variables, such as teachers’ experiment or education level, are relatively the same across classes of different types (as shown in Table 4), and only source of difference in teachers’ performance is from the assignment of class type itself. 
+
+Recall the results of project 1, we cannot conclude that there are causal relations between class types and mean math scores of students since we do not know about the interference among students in different classes. For example, students from different class types may review class materials together after before exam, and the performance of their math tests will be influenced by these study groups. However, in project 2, we can make the causal statement since we change the unit of analysis to the teacher from the individual student, which help justify the no-interference part of SUTVA. Irrelevant of the interference among students, the resulting inferences are valid for the effect on the teachers of being assigned to a particular type of class. 
+
+## Reference
+
+<div id="refs"></div>
+
+\newpage
+## Appendix
+```{r, echo=FALSE,eval=FALSE}
+name_list <- c("g1tchid","g1tgen","g1trace","g1thighdegree","g1tcareer","g1tmathss","g1schid","g1tyears","g1classtype")
+summary_data <- star[,name_list]
+label(summary_data$g1tgen) <- "teacher gender"
+label(summary_data$g1trace) <- "teacher ethnicity"
+label(summary_data$g1thighdegree) <- "teacher degree"
+label(summary_data$g1tcareer) <- "teacher career ladder"
+label(summary_data$g1tmathss) <- "scaled math score"
+label(summary_data$g1tyears) <- "teacher experience (years)"
+label(summary_data$g1classtype) <- "class type"
+summary_data$g1tcareer <- factor(summary_data$g1tcareer,levels = levels(summary_data$g1tcareer),
+                                 labels = c("Not on Ladder","APPRENTICE","PROBATION","LADDER LEVEL 1","LADDER LEVEL 2","LADDER LEVEL 3","PENDING"))
+table1(~g1tgen + g1trace + g1tmathss + g1thighdegree + g1tcareer + g1tyears | g1classtype,data=summary_data,topclass = 'Rtable1-zebra')
+```
+\begin{center}Table 4 Summary of the STAR data.\end{center}
+```{r pressure, echo=FALSE, out.width = '100%'}
+knitr::include_graphics("summary_table.png")
+```
+
+```{r, echo=F,fig.width=8, fig.height=3, fig.cap="Model Diagnostic Figures"}
+par(mfrow=c(1,3))
+plot(math.aov, 1)
+hist(my_data_tr$g1tmathss, main = "Histogram for math score", xlab = "1st grade math score of teachers")
+plot(math.aov,2)
+```
+
+```{r ci_figure, echo=FALSE,fig.cap="Class type pair-wise confidence interval",fig.width=6,fig.height=3}
+par(mar=c(5,15,3,3))
+plot(T.ci, las=1 , col="brown",cex.axis=0.8)
+```
+
+```{r,echo=FALSE,fig.cap="Math score distributions for different class types",fig.width=8,fig.height=6}
+boxplot(g1tmathss ~ g1classtype, data = data_tr,
+        color = c("#00AFBB", "#E7B800", "#FC4E07"),
+        ylab = "Math Score", xlab = "Treatment")
+```
