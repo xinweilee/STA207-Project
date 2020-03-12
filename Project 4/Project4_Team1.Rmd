@@ -1,0 +1,313 @@
+---
+title: "Predicting the success of bank telemarketing"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  word_document: default
+  pdf_documment: default
+  html_document:
+    df_print: paged
+    fig_caption: yes
+    number_sections: yes
+header-includes: 
+- \usepackage{float}
+bibliography: cit.bib
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 18px;
+  }
+
+</style>
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message = FALSE,warning = FALSE)
+options(digits = 3)
+```
+
+```{r}
+library(VIM)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(knitr)      # web widget
+library(caret)      # rocr analysis
+library(ROCR)       # rocr analysis
+library(gridExtra)  # arranging ggplot in grid
+library(InformationValue)
+library(MASS)
+library(randomForest)
+library(arm)
+library(dplyr)
+library(broom)
+library(tidyr)
+library(caTools)
+library(plotrix)
+library(ggplotify)
+data <- read.csv('bank-full.csv', header = T, sep = ";")
+```
+**Team ID: 1**
+
+**Name: Xinwei Li (Model Comparison)**
+
+**Name: Minmeng Tang (Model Fit)**
+
+**Name: Yifu Wu (Data Exploration)**
+
+**Name: Bingzheng Xu (Random Forest)**
+
+**Github repo (link): https://github.com/minmengtang/STA207_Project**
+
+# 1 Introduction
+
+In 2007, a global economic crisis emerged in the United States and quickly spread to Europe, leading to new thoughts about financial management [@hodgson2019great]. Suspicion on banks results in withdrawing money, frozen investment and credit loss. Therefore, for those banks who were affected by the public debts, a competition for subscribing clients to long-term deposits started to enhance their business. Due to the widespread use of telephones, telemarketing, a marketing method through remote communication channels, became a common and easy way to obtain various aspects of information [@moro2013data].
+
+In this project, we propose a logistic regression (LR) model to predict the success of telemarketing calls for selling bank long-term deposits and to identify potential subscribers based on the information from a Portuguese retail bank telemarketing campaign. We also compared the performance of the logistic regression model with a random forest (RF) model. We choose LR and RF since they have the advantage of fitting models that tend to be easily understood by humans, while also providing good predictions in classification tasks [@moro2014data]. Using four performance metrics, true positive rate (TPR), false positive rate (FPR), receiver operating characteristic (ROC) curve, and area under the curve (AUC), the two models are compared using the testing set.
+
+We choose to use the full dataset with 45211 observations and 17 inputs, which is ordered by date from 2008 to 2010. There are a few reasons why we choose the full dataset instead of subsets. First, the full dataset provides more information and guarantees enough observations in both training and testing sets for predicting models. More importantly, all the available datasets are highly imbalanced towards "no" in the decision variable. When balancing the training set, more "yes" results in a larger set. Therefore, we choose the "bank-full" dataset for its highest records of successful contact `r table(data$y)[2]` (11.7%) among four datasets we potentially choose from [@lusa2015joint]. 
+
+# 2 Data Exploration
+
+There are some variables with unknown values in this dataset. The left histogram in Figure 8 in appendix shows that the result of the previous marketing campaign has the most unknowns (82%). Contact methods, education level and type of job have some unknown values (29%, 4% and 0.6% separately). The right one indicates combination of unknown values between variables, for example, the fourth row from the top means that the number of observations that all these four variables contain missing value. Given the fact that it is diffcult to obtain all known values in real suvey, we will not regard those "unknown"s as missing values, but rather we regard those as a factor level and will be analysed later.
+
+The following part will explore several variables and their effects on the outcome that whether the customer subscribes to a long-term deposit or not. Based on the results in Figure 1, middle-aged people which around 30-40 are more likely to buy the bank product. Management jobs, blue-collar and technicians are top three jobs tend to subscribe since those jobs may earn more money and are more eager to manage their finances. Also for those married people are more willing to buy deposits than others since they want good feedback from a bank (High interest) to support family livelihoods. The same issue happens to those highly educated people due to that they know some basic knowledge about economics.
+
+```{r, fig.height=3.5,fig.pos="H",fig.align = "center", fig.cap="Deposit Subscription based on key variables"}
+age <- ggplot(data) + geom_bar(mapping= aes(x=age, fill=y)) + theme_bw()+ theme(axis.text.x = element_text(angle=45, hjust=1))
+job <- ggplot(data) + geom_bar(mapping= aes(x=job, fill=y)) + theme_bw()+ theme(axis.text.x = element_text(angle=45, hjust=1))
+marital <- ggplot(data) + geom_bar(mapping= aes(x=marital, fill=y)) + theme_bw()+ theme(axis.text.x = element_text(angle=45, hjust=1))
+education <- ggplot(data) + geom_bar(mapping= aes(x=education, fill=y)) + theme_bw()+ theme(axis.text.x = element_text(angle=45, hjust=1))
+ggarrange(age, marital, job, education, ncol = 2, nrow = 2, common.legend = TRUE, legend = "right")
+```
+
+The full dataset is randomly partitioned into 70% being utilized to train the model while the remaining 30% (13564 observations) are left for testing the model. Since the dataset is highly imbalanced, and the standard classifier algorithms, such as logistic regression and random forest we use in the project, will have a bias which means that it tends to only predict the majority class data and regards minority class as noise and are usually ignored. As a result, the minority class may have a high probability of misclassification compared with the majority. To avoid such a problem, we balance the training data by maintaining "yes" (3721) and randomly selecting the same number of "no" from the initial training set to form a new training set with 7442 observations. 
+
+```{r,include=FALSE}
+data <- read.table("bank-full.csv",sep = ";",header = TRUE)
+data$duration <- NULL
+table1 <- table(data$y)
+data$y <-ifelse(data$y=="yes",1,0)
+data$y <- as.factor(data$y)
+data$day <- as.factor(data$day)
+set.seed(100)
+training_prop <- 0.7
+train_row <- sample(1:nrow(data),training_prop*nrow(data))
+training <- data[train_row,]
+test <- data[-train_row,]
+
+training_yes <- training[training$y==1,]
+training_no <- training[training$y==0,]
+training_no_balance_row <- sample(1:nrow(training_no),nrow(training_yes))
+training_no_balance <- training_no[training_no_balance_row,]
+training <- rbind(training_yes,training_no_balance)
+plot_pred_type_distribution <- function(df, threshold) {
+  v <- rep(NA, nrow(df))
+  v <- ifelse(df$pred >= threshold & df$y == 1, "TP", v)
+  v <- ifelse(df$pred >= threshold & df$y == 0, "FP", v)
+  v <- ifelse(df$pred < threshold & df$y == 1, "FN", v)
+  v <- ifelse(df$pred < threshold & df$y == 0, "TN", v)
+  
+  df$pred_type <- v
+  
+  ggplot(data=df, aes(x=y, y=pred)) + 
+    geom_violin(fill=rgb(1,1,1,alpha=0.6), color=NA) + 
+    geom_jitter(aes(color=pred_type), alpha=0.6) +
+    geom_hline(yintercept=threshold, color="red", alpha=0.6) +
+    scale_color_discrete(name = "type") +
+    labs(title=sprintf("Threshold at %.2f", threshold))
+}
+#model <- glm(y~.,family = binomial,data = training)
+#stepAIC(model)
+model_aic <- glm(y~job + marital + education + balance + housing + loan + contact + month + campaign + previous + poutcome,family = binomial,data = training)
+#summary(model_aic)
+
+predicted_test <- predict(model_aic,test,type = "response")
+predictions_lr <- data.frame(y=test$y,pred = NA)
+predictions_lr$pred <- predicted_test
+predicted_train <- predict(model_aic,training,type = "response")
+optCutoff <- optimalCutoff(training$y,predicted_train)
+```
+
+# 3 Methodology
+
+## 3.1 Logistic Regression
+
+Logistic regression is a common statistical model, which is used to model the probability of a binary class or event. It uses a logistic function to measure the relationship between the categorical dependent variable and independent variables. The detailed logistic regression model is shown below:
+
+>$ln(\frac{p}{1-p})=\beta_0 + \beta_1x_1 + ... + \beta_kx_k$ 
+
+where k is the number of predictors used in the model, p=P(Y=1|X) is the probability of response variable Y. In our case, Y is whether the client subscribed a term deposit and 1 means the client did subscribe a term deposit; $\beta_0$ is the intercept; $\beta_1$ to $\beta_k$ are coefficients for predictors, which are decided through Akaike information criterion (AIC). This is because AIC measures predictive accuracy while BIC measures goodness of fit [@sober2002instrumentalism;@shmueli2010explain]. Since our main purpose is to predict whether the client subscribed to a term deposit, AIC would be preferred for feature selection. Based on AIC results, 11 independent variables are used in the logistic regression model, which are job, marital status, education, average yearly balance, whether having housing loan, whether having personal loan, contact information, last contact month, number of contacts during this campaign, number of contacts before this campaign, and outcome of the previous marketing campaign. The coefficients are estimated based on the Maximum Likelihood method, which maximizes the likelihood (conditional probability of the data given parameter estimates) of the sample data.
+
+The major assumptions of logistic regression include [@u_2018]: 1) the outcome is a binary or dichotomous variable like yes vs no; 2) there is a linear relationship between the logit of the outcome and each predictor variables; 3) there is no influential value (extreme values or outliers) in the continuous predictors; 4) there is no high intercorrelation (i.e. multicollinearity) among the predictors.
+
+## 3.2 Random Forest
+
+The random forest (RF) is an "ensemble learning" technique consisting of the aggregation of a large number of decision trees, resulting in a reduction of variance compared to the single decision trees [@couronne2018random]. We use the 'randomForest' and 'caret' packages in R to train and tune our random forest model. The most important parameters for RF are ntree and mtry. The parameter ntree denotes the number of trees in the forest with a default value of 500. The parameter mtry denotes the number of features randomly selected as candidate features at each split. The default value is $\sqrt{p}$ for classification with p number of features in the dataset. 
+
+First, we select features as input by using variable importance from the random forest algorithm with the default values of ntree and mtry parameters. The variable importance for each feature is shown in figure 2. To match the features number of logistic model, we select 11 variables with highest meanDecreaseGini value as input features to the RF model, which are last contact day, last contact month, average yearly balance, age, job, outcome of the previous campaign, contact type, number of contacts during this campaign, number of days that passed by after the client, education, whether having housing loan. Gini in RF algorithm means the importance of a particular variable in partitioning the data into the defined classes; therefore, variables with higher MeanDecreaseGini play a more important role in classification and prediction.
+
+```{r,rf_feature_selection,fig.pos="H",fig.height=3.5,fig.align = "center", fig.cap="RF model feature importance"}
+rf_feature_selection <- randomForest(y ~ ., data = training, ntree = 500)
+rf_feature <- varImpPlot(rf_feature_selection,main = NULL,cex.axis=0.1,cex.label=0.1)
+```
+
+## 3.3 Metrics for Model Comparison [@kirasich2018random]
+
+Accuracy, true positive rate (TPR), false positive rate (FPR), the receiver operating characteristic (ROC) curve, area under the curve (AUC) are often considered as the core metrics when comparing overall model performance. Table 2 in appendix shows the evaluation metrics for comparison of model performance. Accuracy, which is the percentage of correct classification, is a nice overall average of how well a model can predict and simple to compute. However, if there is a class imbalance, for example, 88% of failure in our testing set, it may not be useful. 
+
+In cases where there is a high class imbalance we need to use metrics such as true positive rate (TPR) and false positive rate (FPR). TPR is calculated as the portion of positives that are correctly identified, and FPR is the portion that was incorrectly identified as positive but is negative. They can be graphically represented using the receiver operating characteristic (ROC) curve, which is a graph with the x-axis of the FPR and the y-axis of the TPR at various threshold settings. A perfect prediction would have a false positive rate of 0 and a true positive rate of 1. When graphed over a series of thresholds, the area under the curve (AUC) can provide a single value for providing insight into how well the model classification is: the higher the AUC, the better the model performs. The AUC is more descriptive than accuracy because it is a balance of accuracy and false positive rate.
+
+# 4 Analysis and Results
+
+## 4.1 Logistic Regression
+
+For logistic regression, the confusion matrix from test data is shown in figure 3. From the table, we can calculate the prediction accuracy is 78.83%, TPR is 61%, FPR is 18.8%. The ROC curve is shown in figure 3 below, with AUC equals 0.7749.
+
+```{r,include=FALSE}
+predicted <- rep("yes",length(predicted_test))
+predicted[predicted_test<optCutoff] <- "no"
+predicted <- as.factor(predicted)
+test_true <- ifelse(test$y==1,"yes","no")
+test_true <- as.factor(test_true)
+cmatrix <- caret::confusionMatrix(predicted,test_true)
+table3 <- cmatrix$table
+```
+
+```{r,roc_logistic,fig.height=2.9,fig.width=5,fig.pos="H",fig.align = "center", fig.cap="ROC curve with confusion matrix (columns are predicted, rows are target) for LR"}
+rocr.pred.lr = prediction(predictions = predicted_test, labels = test$y)
+rocr.perf.lr = performance(rocr.pred.lr, measure = "tpr", x.measure = "fpr")
+rocr.auc.lr = as.numeric(performance(rocr.pred.lr, "auc")@y.values)
+plot(rocr.perf.lr,
+     lwd = 3, colorize = TRUE, cex.axis=0.8, cex.lab=0.8,cex=0.8,
+     print.cutoffs.at = seq(0, 1, by = 0.1),
+     text.adj = c(-0.2, 1.7))
+mtext(paste('Logistic Regression - auc : ', round(rocr.auc.lr, 5)),cex = 0.8)
+abline(0, 1, col = "red", lty = 2)
+addtable2plot(0.6 ,0.1,table3,bty="o",display.rownames=TRUE,hlines=TRUE,
+  vlines=TRUE)
+```
+
+## 4.2 Logistic Regression Diagnostics
+**Influential values** are extreme individual data points that can alter the quality of the logistic regression model. We inspect the residuals to check whether the data contains potential influential observations. Since in logistic regression the data are discrete and so are the residuals, plots of raw residuals from logistic regression are generally not useful. Instead, the binned residuals plot, after dividing the data into categories (bins) based on their fitted values, shows the average residual versus the average fitted value for each bin [@gelman2006data]. As shown in figure 9 in appendix, the strong pattern in the traditional residual plot arises from the discreteness of the data, and there is no obvious pattern shown in the binned residual plot. Therefore, there are no influential observations in the data. The standardized residuals are plotted in figure 4, suggesting that there are no influential points or outliers.
+
+```{r, echo=F,fig.height=2.5,fig.width=5,fig.cap="Standardized residual plots"}
+model.data <- augment(model_aic) %>% 
+  mutate(index = 1:n())
+ggplot(model.data, aes(index, .std.resid)) + 
+  geom_point(aes(color = y), alpha = .5) +
+  theme_bw()
+```
+
+**Multicollinearity** is an important issue in regression analysis and should be fixed by removing the concerned variables. We calculate the Variance Inflation Factor (VIF) of each variable. All VIF values shown in table 1 are below 5, suggesting that there are no multicollinearity problems in the model.
+```{r}
+table2 <- as.data.frame(car::vif(model_aic))
+names(table2) <- ""
+table2 <- t(table2)
+table2 <- table2[1,]
+table2 <- t(table2)
+kable(table2,caption = "VIF for covariates",results="oasis")
+```
+
+**Linear Relationship** is to make sure the independent variables are linearly related to the logit of the dependent variable. we visually inspect the scatter plot between each predictor and the logit value, which is shown in the figure below. From figure 7 in the appendix, we notice that all variables except campaign are quite linearly associated with the deposit outcome in the logit scale; however, campaign shows some non-linear relationship.
+
+## 4.3 Random Forest
+
+To tune the RF model, we use a random search algorithm from 'caret' package in r, which uses 5-fold cross-validation based on training data to optimize the mtry values in the RF model. The optimal mtry value is 7, which provides the highest prediction accuracy and Kappa value. Using optimal mtry value, we try different ntree values varying from 5 to 5000, and find that ntree = 500 provides the highest prediction accuracy and Kappa value.
+
+Similar with logistic regression, the confusion matrix is calculated based on the test dataset, which is shown in figure 5. From the table, we can calculate the prediction accuracy is 75.7%, TPR is 67%, FPR is 23.1%. The ROC curve is shown in figure 6 below, with AUC equals 0.7835.
+
+
+```{r}
+rf <- randomForest(y~ day+month+balance+age+job+poutcome+contact+campaign+pdays+education+housing,data = training,ntree=500,mtry=7)
+rf_predict <- predict(rf, type='prob', newdata = test)
+
+predicted_rf <- rep("yes",length(rf_predict[,2]))
+predicted_rf[rf_predict[,2]<optCutoff] <- "no"
+predicted_rf <- as.factor(predicted_rf)
+cmatrix_rf <- caret::confusionMatrix(predicted_rf,test_true)
+table4 <- cmatrix_rf$table
+```
+
+```{r,fig.height=2.9,fig.width=5,roc_RF,fig.pos="H",fig.align = "center", fig.cap="ROC curve with confusion matrix (columns are predicted, rows are target) for RF"}
+rocr.pred.lr.rf = prediction(predictions = rf_predict[,2], labels = test$y)
+rocr.perf.lr.rf = performance(rocr.pred.lr.rf, measure = "tpr", x.measure = "fpr")
+rocr.auc.lr.rf = as.numeric(performance(rocr.pred.lr.rf, "auc")@y.values)
+plot(rocr.perf.lr.rf,
+     lwd = 3, colorize = TRUE, cex.axis=0.8, cex.lab=0.8,cex=0.8,
+     print.cutoffs.at = seq(0, 1, by = 0.1),
+     text.adj = c(-0.2, 1.7))
+mtext(paste('Random Forest - auc : ', round(rocr.auc.lr.rf, 5)))
+abline(0, 1, col = "red", lty = 2)
+addtable2plot(0.6 ,0.1,table4,bty="o",display.rownames=TRUE,hlines=TRUE,
+  vlines=TRUE,cex = 0.8)
+```
+
+## 4.4 Performance comparision
+```{r,roc_comp,fig.height=2.9,fig.width=5,fig.pos="H",fig.align = "center", fig.cap="ROC curves comparison"}
+plot(rocr.perf.lr,lwd = 1,cex=0.8,cex.lab=0.8,cex.axis=0.8)
+lines(rocr.perf.lr.rf@x.values[[1]],rocr.perf.lr.rf@y.values[[1]], lwd = 1, lty=2)
+legend("bottomright",legend = c(paste('Logistic Regression - auc : ', round(rocr.auc.lr, 5)),paste('Random Forest - auc : ', round(rocr.auc.lr.rf, 5))),
+       lty = 1:2, cex = 0.6)
+```
+Figure 6 compares the ROC curves for LR and RF models tested. The random forest ROC curve is related to a higher AUC of 0.7852 and outperforms the logistic regression model within most of the FPR range. For the range FPR within [0.08,0.65], the RF gets a higher TPR value ranging from 0.45 to 0.90. The TPR for random forest (67%) is higher than logistic regression (61%) and yields a higher false positive rate (23.1% vs 18.8%). In the case of bank telemarketing, it is better to produce more successful sells even if this involves losing some effort in contacting non-buyers. Therefore, the RF model performs better in predicting the success of bank telemarketing.
+
+# 5 Discussion
+
+We find that RF performs better than LR according to the Area Under the Curve (AUC) with a difference of 0.0133 (1.33% higher). The TPR for the random forest with 500 trees is 9.8% higher than logistic regression, while FPR also higher in random forest. Since we emphasize more on successful contact, we still suggest a better performance of RF. The results are consistent with previous studies [@couronne2018random;@kirasich2018random]. The better performances of the RF model might come from its ability to capture non-linear relations, while the LG model could only capture the linear relations of explanatory variables.
+
+# Reference
+
+<div id="refs"></div>
+
+# Appendix
+```{r,eval=FALSE}
+#use random search to tune the random forest
+control <- trainControl(method="cv", number=5, search = "random",verboseIter = TRUE,summaryFunction = twoClassSummary)
+set.seed(123)
+rf_random <- train(y~ day+month+balance+age+job+poutcome+contact+campaign+pdays+education+housing,data = training, method= 'rf',metric="ROC",tuneLength=15,trControl=control)
+print(rf_random)
+```
+
+```{r,linear_plot,fig.pos="H",fig.align = "center", fig.cap="Linear relationship between variables"}
+mydata <- training %>%
+  dplyr::select_if(is.numeric) 
+predictors <- colnames(training)
+# Bind the logit and tidying the data for plot
+probabilities <- predict(model_aic, type = "response")
+mydata <- mydata %>%
+  mutate(logit = log(probabilities/(1-probabilities))) %>%
+  gather(key = "predictors", value = "predictor.value", -logit)
+
+ggplot(mydata, aes(logit, predictor.value))+
+  geom_point(size = 0.5, alpha = 0.5) +
+  geom_smooth(method = "loess") + 
+  theme_bw() + 
+  facet_wrap(~predictors, scales = "free_y")
+```
+
+```{r, include=F}
+data[data == "unknown"]= NA
+sapply(data, function(x) sum(is.na(x)))
+```
+
+```{r, fig.height=2.9, fig.pos="H",fig.align = "center", fig.cap="Distribution of Missing data"}
+aggr_plot <- aggr(data, col=c('blue','red'), 
+                  numbers=TRUE, labels=names(data), 
+                  cex.axis=.7, gap=3, cex.lab=0.8,
+                  ylab=c("Proportion of missings","Combinations"))
+```
+
+```{r,residual,fig.pos="H",fig.height=3.5,fig.cap="residual plot"}
+par(mfrow=c(1,2))
+plot(model_aic,1,cex.axis=0.7,cex.main=0.8)
+binnedplot(fitted(model_aic),residuals(model_aic, type = "response"),nclass = NULL, xlab = "Expected binned values",ylab = "Average binned residual",main = "Binned vs Binned fitted",cex.axis = 0.7, cex.main = 0.8, col.int = "gray")
+```
+
+```{r Table_1,tab.pos="H"}
+table5 <- c("Accuracy","True Positive Rate (TPR)","False Positive Rate (FPR)","Area Under the Curve (AUC)")
+table5 <- as.data.frame(table5)
+names(table5) <- "Metric"
+table5$Formula <- c("(TP + TN)/(TP + TN + FP + FN)","TP/(TP + FN)","FP/(FP + TN)","Integral area of plotting TPR vs FPR")
+kable(table5, caption = "Evaluation metrics for comparison of model performance, TP: True Positive, TN: True Negative, FP: False Positive, FN: False Negative", results="oasis")
+```
