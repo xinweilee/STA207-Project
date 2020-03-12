@@ -1,0 +1,358 @@
+---
+title: "The effects of mandatory jail sentences on vehicle fatalities"
+output:
+  pdf_document: default
+  word_document: default
+  pdf_documment: default
+  html_document:
+    df_print: paged
+    fig_caption: yes
+    number_sections: yes
+header-include: \usepackage{float}\floatplacement{figure}{H}
+bibliography: cit.bib
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 18px;
+  }
+
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,message = FALSE,warning = FALSE)
+options(digits = 3)
+```
+```{r}
+library(AER)
+library(MatchIt)
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(tidyverse)
+library(broom)
+library(arm)
+library(AER)
+library(ggplot2)
+library(dplyr)
+library(ggpubr)
+library(maps)
+library(tidyverse)
+library(mapproj)
+data("Fatalities")
+Fatalities[which(is.na(Fatalities$jail)),c("jail","service")] <- c("yes","yes")
+Fatalities$jail_factor <- Fatalities$jail
+```
+
+**Team ID: 1**
+
+**Name: Xinwei Li (Model Diagnostic)**
+
+**Name: Minmeng Tang (Model Fit)**
+
+**Name: Yifu Wu (Introduction)**
+
+**Name: Bingzheng Xu (Discussion)**
+
+**Github repo (link): https://github.com/minmengtang/STA207_Project**
+
+## 1 Introduction
+
+Traffic fatalities, a major source of accident deaths in the US, have received lots of attention. Only in 2016, approximately 10,000 people died in alcohol-impaired driving crashes, which accounts for nearly 30% of all traffic fatalities. Therefore, in the 1980s, the government enacted laws that including mandatory jail sentences for driving under the influence (DUI) aimed at reducing drunk driving [@ruhm1996alcohol]. The purpose of this project is to explore whether having a mandatory jail sentence can potentially reduce traffic fatalities.
+
+The Fatalities dataset used in the project is a balanced panel (longitudinal) data with 336 observations coming from 48 levels of federal states (excluding Alaska, Hawaii, and the District of Columbia) in the U.S. together with 7 levels of time period from 1982 to 1988 [@stock2012introduction]. Among all 34 variables in the dataset, we explore variables that may have an influence on vehicle fatalities. In previous studies, beer tax, minimum drinking age, unemployment rate, personal income, and mandatory jail sentences are generally considered as important variables that may influence vehicle fatalities [@ruhm1996alcohol; @stock2012introduction]. Data on the mandatory jail sentence of Californian in 1988 is missing in the original Fatalities dataset. With the careful investigation on the development of California drunk-driving legislation [@laurence1988development], we find out that California imposed mandatory jail sentences in 1988 and we replace 'yes' with the missing value in the dataset.  
+
+Figure 1 displays trends of these variables over 1982-1988. The aggregate vehicle fatalities in 48 states rapidly increased except for two slight drops of 1982-1983 and 1984-1985 due to the influence of the drunk-driving law around 1983. Because of economic development, we see decreasing the average unemployment rate and increasing average personal income over time. The reductions in average beer taxes occurred during the high inflation years in the early 1980s. Also since the law was enacted around 1983, the average minimum drinking age rose rapidly during those years together with the increase of mandatory jail sentences. 
+
+```{r, include=F}
+Fatalities_1 <- Fatalities %>% 
+  mutate(jail = ifelse(jail == "no",0,1))
+Fatalities <- Fatalities %>% 
+  mutate(abbreviation = as.character(state))
+```
+
+```{r, include=F}
+fatal_sum <- aggregate(cbind(Fatalities$fatal), by = list(Fatalities$year), FUN = sum, na.rm = T)
+colnames(fatal_sum) <- c("year", "fatal")
+
+avg <- aggregate(cbind(Fatalities$beertax, Fatalities$drinkage, Fatalities$unempus, Fatalities$income), by = list(Fatalities$year), FUN = mean, na.rm = T)
+colnames(avg) <- c("year", "beer_tax", "drink_age", "unemployment_rate", "income")
+
+jail <- aggregate(Fatalities_1$jail, by = list(Fatalities_1$year), FUN = sum, na.rm = T)
+colnames(jail) <- c("year", "yes")
+
+time_series <- merge(fatal_sum, avg, by = "year")
+time_series <- merge(time_series, jail, by = "year")
+```
+
+```{r, echo=F, fig.height=4, out.width = '80%', fig.align = "center", fig.cap="Time trends in selected variables" }
+fatal <- ggplot(time_series, aes(x = year, y = fatal)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1))  + labs(x = "Year", y = "Vehicle Fatalities")
+unemployment_rate <- ggplot(time_series, aes(x = year, y = unemployment_rate)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1)) + labs(x = "Year", y = "Unemployment rate")
+income <- ggplot(time_series, aes(x = year, y = income)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1), axis.title.y = element_text(size = 10)) + labs(x = "Year", y = "Per Capita Personal Income")
+beer <- ggplot(time_series, aes(x = year, y = beer_tax)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1)) + labs(x = "Year", y = "Beer Tax")
+age <- ggplot(time_series, aes(x = year, y = drink_age)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1)) + labs(x = "Year", y = "Drinking Age")
+jail_sentence <- ggplot(time_series, aes(x = year, y = yes)) + geom_line(group = 1) + geom_point() + theme_bw() + theme(axis.text.x = element_text(angle=45, hjust=1)) + labs(x = "Year", y = "Jail Sentence")
+
+ggarrange(fatal, unemployment_rate, income, beer, age, jail_sentence, ncol = 3, nrow = 2, align = "hv")
+```
+
+```{r, include=F,message=F}
+# load state abbreviations and convert case to match format in map_data
+stateab <- read_csv('stateAb.csv') %>% 
+  mutate_all(str_to_lower)
+```
+
+We are also interested to see the spatial-temporal trends of vehicle fatalities and mandatory jail sentences across 48 states over 7 years. To make a fair comparison across states, we show the fatality rate in terms of total fatality per 10000 capita in Figure 2. The fatalities rates were little changed for most states, and the east coast and the central region have a lower rate than that of the west coast. Figure 3 shows that there is a rapid increase in mandatory jail sentences during 1982-1984, especially in the west coast.
+
+```{r, echo=F, fig.height=5, fig.align = "center", fig.cap="Traffic fatalities rate over 7 years"}
+#windowsFonts("Arial" = windowsFont("Arial"))
+state_map <- map_data("state") %>% 
+  # attach abbreviation data to permit join to fata82
+  left_join(stateab, by = c('region' = 'state')) %>% 
+  # then join traffic incident data
+  inner_join(dplyr::select(Fatalities, abbreviation, fatal, jail, year, pop), by = 'abbreviation')
+
+fatalities_map<-ggplot() + 
+  facet_wrap(~year, nrow = 2, ncol = 4) +
+  #Add state borders:
+  geom_polygon(data = state_map, aes(x=long,y=lat,group=group, fill = fatal*10000/pop), colour = "white") +
+  #Adjust the map projection
+  coord_map("albers",lat0=39, lat1=45) +
+  #Add a title:
+  #ggtitle("Traffic Fatalities Rate Within 7 Years") +
+  #Adjust the theme:
+  theme_classic() +
+  theme(panel.border = element_blank(),
+        axis.text = element_blank(),
+        line = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size=20),
+        legend.title = element_blank(),
+        legend.position = c(0.9, 0.25))
+fatalities_map
+```
+
+```{r, echo=F, fig.height=4, fig.align = "center", fig.cap="Mandatory Jail Sentence over 7 Years"}
+jail_map<-ggplot() + 
+  facet_wrap(~year, nrow = 2, ncol = 4) +
+  #Add state borders:
+  geom_polygon(data = state_map, aes(x=long,y=lat,group=group, fill = jail), colour = "white") +
+  #Adjust the map projection
+  coord_map("albers",lat0=39, lat1=45) +
+  #Add a title:
+  #ggtitle("Mandatory Jail Sentence Within 7 Years") +
+  #Adjust the theme:
+  theme_classic() +
+  theme(panel.border = element_blank(),
+        axis.text = element_blank(),
+        line = element_blank(),
+        axis.title = element_blank(),
+        plot.title = element_text(size=20),
+        legend.title = element_blank(),
+        legend.position = c(0.9, 0.3))
+jail_map
+```
+
+## 2. Propensity score matching
+Due to ethical concerns and logistical constraints, it is only possible to collect the US traffic fatalities panel data from the observational study, where we have no control of the independent variables. To estimate causal effect from the observation data, we need to apply quasi-experimental methods, such as fixed-effects panel data analysis, instrumental variables and propensity score matching [@nichols2007causal; @rosenbaum1983central].
+
+We use propensity score matching method to study the effect of mandatory jail on total traffic fatalities. Propensity score matching is a statistical matching technique that attempts to estimate the effect of a treatment by accounting the covariates that predict receiving the treatment [@rosenbaum1983central]. The difference in the treatment outcome between treated and untreated groups may be caused by a variable that predicts treatment rather than the treatment itself, in which case the causal inference will not be valid. For randomized experiments, randomization ensures that treatment-groups will be balanced on average; however, observational data does not have the random assignment of treatment, which requires the matching techniques to reduce the bias due to the non-random assignment of treatment. 
+
+In our case, whether a state has a mandatory jail sentence at a certain year is not randomly assigned. The influences from other variables on whether having a mandatory jail sentence or total traffic fatalities can not be clearly identified. Therefore, we need to apply propensity score matching method to match states with different status of jail sentence but similar effects from other variables, and use these matched data to study the effect of total traffic fatalities solely from whether having mandatory jail sentence. 
+
+The procedure applying propensity score are:
+
+1) Construct a logistic regression model on the dependent variable of whether having mandatory jail sentences based on other appropriate cofounders and estimate the propensity score as predicted probability. The logistic regression model is shown as follows:
+
+>$ln(\frac{p}{1-p})=\beta_0 + \beta_1x_1 + ... + \beta_kx_k$ 
+
+>where k is the number of predictors used in the model, p=P(Y=1|X) is the probability of response variable Y. In our case, Y is whether there exist mandatory jail with 0 means no mandatory jail and 1 means having mandatory jail; $\beta_0$ is the intercept; $\beta_1$ to $\beta_k$ are coefficients for predictors, which are tax on case of beer, minimum legal drinking age, unemployment rate, whether having breath test law, whether having mandatory community service, and population according to the previous studies [@ruhm1996alcohol; @stock2012introduction]. The coefficients are estimated based on the *Maximum Likelihood* method, which maximizes the likelihood (conditional probability of the data given parameter estimates) of the sample data.
+
+2) Match each state with a mandatory jail sentence with states not having a mandatory jail sentence based on their propensity scores. Similar to [@lu2020disparities], we use the nearest-neighbor matching algorithm to match propensity scores between states with and without a mandatory jail sentence.
+
+3) Verify that covariates (predictors) are balanced across cases with and without mandatory jail sentence.
+
+4) Use the t-test to verify the effect of mandatory jail on total traffic fatalities.
+
+The major assumptions of logistic regression include [@u_2018]: 
+
+1) the outcome is a binary or dichotomous variable like yes vs no; 
+
+2) there is a linear relationship between the logit of the outcome and each predictor variables; 
+
+3) there is no influential value (extreme values or outliers) in the continuous predictors;
+
+4) there is no high intercorrelation (i.e. multicollinearity) among the predictors.
+
+## 3. Results
+### 3.1 Propensity score estimation
+We estimate the propensity score by running a logit model where the outcome variable is a binary variable indicating if the observation has mandatory jail sentence. To make a causal estimate of a mandatory jail sentences and vehicle fatalities, we need to include any covariate that is related to both the treatment assignment (jail) and potential outcomes (fatalities). The model results is shown in Table 1. All covariates included are associated with mandatory jail sentences at 95% significant level.
+```{r}
+levels(Fatalities$jail) <- c(0,1)
+Fatalities$jail <- as.numeric(as.character(Fatalities$jail))
+ps_model <- glm(jail~beertax+drinkage+unempus+breath+service+pop, family = binomial,data = Fatalities)
+table_summary <- tidy(ps_model)
+names(table_summary)[1] <- "coefficient"
+table_summary[1,1] <- "Intercept"
+table_summary[2,1] <- "Beer tax"
+table_summary[3,1] <- "Minimum legal drinking age"
+table_summary[4,1] <- "Unemployment rate"
+table_summary[5,1] <- "Having preliminary breath test law"
+table_summary[6,1] <- "Having mandatory community service"
+table_summary[7,1] <- "Population"
+kable(table_summary,caption = "Results of logistic regression model")
+```
+
+Using this model, we calculate the propensity score for each case, which is the predicted probability of being treated given the estimates from the logit model. Figure 4 shows the estimated propensity scores by having mandatory jail sentences or not. The final dataset contains 190 observations, meaning that 95 pairs of treated and control observations were matched.
+
+```{r}
+ps_predict <- data.frame(pr_score = predict(ps_model,type = "response"),
+                         jail = ps_model$model$jail)
+```
+
+```{r}
+data_cov <- c("beertax","drinkage","unempus","breath","service","pop")
+data_cov_plot <- c("beertax","drinkage","unempus","pop")
+
+data_nomiss <- Fatalities %>%  # MatchIt does not allow missing values
+  dplyr::select(fatal, jail, one_of(data_cov)) %>%
+  na.omit()
+
+mod_match <- matchit(jail~beertax+drinkage+unempus+breath+service+pop, data = data_nomiss, method = "nearest")
+#summary(mod_match)
+#plot(mod_match)
+data_match <- match.data(mod_match)
+```
+
+```{r, echo=F, fig.height=2.5, fig.align = "center", fig.cap="Estimated propensity scores by treatment status (jail)"}
+labs <- paste("Mandatory jail sentence:", c("Yes", "No"))
+ps_predict %>%
+  mutate(jail = ifelse(jail == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = pr_score)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~jail) +
+  xlab("Probability of having mandatory jail sentence") +
+  theme_bw()
+```
+\parskip=0pt
+
+### 3.2 Examining covariate balance in the matched sample
+To assess covariate balance in the matched sample, we plot the mean of each covariate against the estimated propensity score, separately by treatment status in Figure 7 in the Appendix. The treatment and control groups will have (near) identical means of each covariate at each value of the propensity score, indicating that the matching is done well. We also conduct t-tests for the null hypothesis of no mean difference for covariate. The t-test results of each covariate in Table 2 below indicate that we are not able to reject the null hypothesis of no mean difference for each covariate. Therefore, we have attained a high degree of balance on the covariates included in the model generally.
+```{r}
+table4 <- do.call("rbind",lapply(data_cov_plot,function(v) {
+    T_test <- t.test(data_match[, v] ~ data_match$jail)
+    t_table <- data.frame(matrix(0,nrow=1,ncol=5))
+  names(t_table) <- c("","difference in means","t","df","p-value")
+  t_table[1,1] <- paste(v,"-jail",sep = "")
+  t_table[1,2] <- (T_test$estimate[1]-T_test$estimate[2])
+  t_table[1,3] <- T_test$statistic
+  t_table[1,4] <- T_test$parameter[[1]]
+  t_table[1,5] <- T_test$p.value
+  return(t_table)
+}))
+table4[1,1] <- "Tax on case of beer"
+table4[2,1] <- "Minimum legal drinking age"
+table4[3,1] <- "US unemployment rate"
+table4[4,1] <- "Population"
+kable(table4,caption = "Pairwise t-test resutls for covariates by treatment (jail)",results="oasis")
+```
+
+\parskip=10pt
+
+### 3.3 Treatment effects estimation
+After having a matched sample, we estimate the treatment effect of mandatory jail sentences by using a t-test for the null hypothesis that there is no mean difference in the vehicle fatalities of cases with and without mandatory jail sentences. In Table 3, we are able to conclude that vehicle fatalities of cases without mandatory jail sentences is significantly higher than those with mandatory jail sentences at 99% confidence, and the confident band for the mean difference is [82.9, 531].
+```{r}
+T_test <- with(data_match, t.test(fatal ~ jail))
+t_table <- data.frame(matrix(0,nrow=1,ncol=7))
+names(t_table) <- c("","difference in means","t","df","p-value","lower","upper")
+t_table[1,1] <- "fatalities without jail - fatalities with jail"
+t_table[1,2] <- (T_test$estimate[1]-T_test$estimate[2])
+t_table[1,3] <- T_test$statistic
+t_table[1,4] <- T_test$parameter[[1]]
+t_table[1,5] <- T_test$p.value
+t_table[1,6] <- T_test$conf.int[1]
+t_table[1,7] <- T_test$conf.int[2]
+kable(t_table,caption = "t-test for fatalities change due to mandatory jail sentence",results = "oasis")
+```
+
+```{r}
+probabilities <- predict(ps_model, type = "response")
+predicted_class <- ifelse(probabilities>0.5,"yes","no")
+```
+
+### 3.4 Logistic model diagnostics
+**Influential values** are extreme individual data points that can alter the quality of the logistic regression model. We inspect the residuals to check whether the data contains potential influential observations. Since in logistic regression the data are discrete and so are the residuals, plots of raw residuals from logistic regression are generally not useful. Instead, the binned residuals plot, after dividing the data into categories (bins) based on their fitted values, shows the average residual versus the average fitted value for each bin [@gelman2006data]. As shown in Figure 5, the strong pattern in the traditional residual plot arises from the discreteness of the data, and there is no obvious pattern shown in the binned residual plot. Therefore, there are no influential observations in the data.
+```{r, echo=F, fig.height=4, fig.align = "center", fig.pos="h",fig.cap="Plots of residuals and binned residuals"}
+par(mfrow=c(1,2))
+plot(ps_model,1)
+binnedplot(fitted(ps_model), 
+           residuals(ps_model, type = "response"), 
+           nclass = NULL, 
+           xlab = "Expected binned values", 
+           ylab = "Average binned residual", 
+           main = "Binned residuals vs Binned fitted",
+           col.int = "gray")
+#plot(ps_model, which = 4, id.n = 3)
+```
+
+**Multicollinearity** is an important issue in regression analysis and should be fixed by removing the concerned variables. We assess the multicollinearity among predictors by checking the variance inflation factors (VIF):
+```{r, include=FALSE}
+model.data <- augment(ps_model) %>% 
+  mutate(index = 1:n())
+model.data %>% top_n(3, .cooksd)
+ggplot(model.data, aes(index, .std.resid)) + 
+  geom_point(aes(color = jail), alpha = .5) +
+  theme_bw()
+```
+
+```{r}
+table5 <- as.data.frame(car::vif(ps_model))
+names(table5) <- ""
+table5 <- t(table5)
+kable(table5,caption = "VIF for covariates",results="oasis")
+```
+
+As a rule of thumb, a VIF value that exceeds 5 or 10 indicates a problematic amount of collinearity. In our case, there is no collinearity since all variables have a value of VIF well below 5. This can also be verified with the collinearity plot of Figure 6 in the Appendix.
+
+## 4 Discussion
+According to the propensity score matching process to the Fatality Data above, we have learnt that having a mandatory jail sentence would have a significant impact on reducing the traffic fatalities caused by driving under influences (DUI). Therefore, it seems that whether the DUI offenders would experience a mandatory jail sentence has become an important topic for the states to ensure the quality of such a penalty. Currently, in all states, first-offense DUI is classified as a misdemeanor, which is punishable by up to six months in jail. However, many states also have the law of probations ordered by the judge. For example, in California, a first offender of DUI should receive 48 hours to six months jail sentence, while this ‘mandatory’ jail time could be removed if the judge orders probation (California State Law). The occurrence of the probation could increase the fear of the community residents who believe the DUI offenders might violate the laws again [@lister_2019]. Also, with a possible inconsistency in monitoring, there is no way to ensure that those offenders are behaving accordingly. In simple words, the occurrence of probation might reduce the effectiveness of jail sentence in punishing DUI offenders.
+
+Apart from the probation, another discussion related to the jail sentence is law enforcement. By the year 2005, all 51 states in the US have enacted the law that 0.08% of blood alcohol concentration (BAC) is illegal to operate a motor vehicle. Before that, the BAC for illegal driving was 0.10% by the year of 1997 [@dang2008statistical]. Also, in many states, different BAC limit would be implemented depends on driver’s age and the type of vehicle driven. Using California as an illustration again, commercial drivers including Taxi and Limo has the illegal driving limits of 0.04% BAC, while it is 0.01% BAC for underage drivers. Since virtually all drivers are impaired regarding at least some driving performance measures at a 0.05% BAC, the stricter BAC limits in determining DUI could be a good way in helping to reduce the traffic fatalities [@fell2014effectiveness]. Therefore, compared with the current illegal DUI limit for all the states nowadays, restrict the limit to 0.05% could be a good way of reducing potential traffic fatalities in the future.
+
+Although jail sentence might be the most effective punishment to prevent people from DUIs, it is still important to educate people about the serious consequence of DUI by showing them the tragedies happened before. The serious jail sentence does not need to occur if no one is driving under influence.
+
+
+## Reference
+
+<div id="refs"></div>
+
+\newpage
+## Appendix
+```{r, echo=F, fig.height=6, fig.align = "center", fig.cap="Plots of collinearity in variables"}
+pairs(Fatalities[,data_cov])
+```
+
+```{r, echo=F, fig.height=5, fig.align = "center", fig.cap="Mean of each covariate against the estimated propensity score by treatment status"}
+fn_bal <- function(dta, variable) {
+  dta$variable <- dta[, variable]
+  dta$jail <- as.factor(dta$jail)
+  support <- c(min(dta$variable), max(dta$variable))
+  ggplot(dta, aes(x = distance, y = variable, color = jail)) +
+    geom_point(alpha = 0.2, size = 1.3) +
+    geom_smooth(method = "loess", se = F) +
+    xlab("Propensity score") +
+    ylab(variable) +
+    theme_bw() +
+    ylim(support)
+}
+
+library(gridExtra)
+grid.arrange(
+   fn_bal(data_match, "beertax") + theme(legend.position = "none"),
+   fn_bal(data_match, "drinkage") + theme(legend.position = "none"),
+   fn_bal(data_match, "pop")+ theme(legend.position = "none"),
+   fn_bal(data_match, "unempus") + theme(legend.position = c(0.9, 0.15)),
+   nrow = 2
+)
+```
